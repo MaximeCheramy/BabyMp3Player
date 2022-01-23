@@ -8,13 +8,14 @@
 
 #define BUTTON_VOLUME_DOWN 2
 #define BUTTON_VOLUME_UP 3
-#define BUTTON_PREVIOUS 4
-#define BUTTON_PLAYLIST_1 5
-#define BUTTON_PLAYLIST_2 6
-#define BUTTON_PLAYLIST_3 7
-#define BUTTON_PLAYLIST_4 8
-#define BUTTON_PLAYLIST_5 9
-#define BUTTON_PlAYLIST_6 12
+#define BUTTON_PLAYLIST_1 4
+#define BUTTON_PLAYLIST_2 5
+#define BUTTON_PLAYLIST_3 6
+#define BUTTON_PLAYLIST_4 7
+#define BUTTON_PLAYLIST_5 8
+#define BUTTON_PlAYLIST_6 9
+#define BUTTON_PREVIOUS 12
+#define BUTTON_STOP A0
 
 int playlistButtons[6] = { BUTTON_PLAYLIST_1, BUTTON_PLAYLIST_2, BUTTON_PLAYLIST_3, BUTTON_PLAYLIST_4, BUTTON_PLAYLIST_5, BUTTON_PlAYLIST_6 };
 
@@ -28,7 +29,7 @@ DfMp3 dfmp3(mySoftwareSerial);
 
 uint8_t currentPlaylist = 1;
 uint8_t currentTrack = 1;
-uint8_t volume = 3;
+uint8_t volume = 10;
 
 void playPlaylist(int playlist);
 
@@ -136,9 +137,9 @@ void playPlaylist(int playlist)
 
 void setVolume(uint8_t newVolume)
 {
-  if (newVolume > 10)
+  if (newVolume > 20)
   {
-    volume = 10;
+    volume = 20;
   }
   else {
     volume = newVolume;
@@ -199,6 +200,13 @@ void buttonUp(int button)
     playPreviousTrack();
   }
 
+  if (button == BUTTON_STOP)
+  {
+    Serial.println("STOP");
+    dfmp3.stop();
+    currentPlaylist = 0;
+  }
+
   for (int i = 0; i < 6; i++)
   {
     if (button == playlistButtons[i])
@@ -223,9 +231,10 @@ void readButtonStates()
                    BUTTON_PLAYLIST_3,
                    BUTTON_PLAYLIST_4,
                    BUTTON_PLAYLIST_5,
-                   BUTTON_PlAYLIST_6 };
+                   BUTTON_PlAYLIST_6,
+                   BUTTON_STOP };
   int pressed = -1;
-  for (int i = 0; i < 9; i++)
+  for (int i = 0; i < 10; i++)
   {
     if (digitalRead(buttons[i]) == 0)
     {
@@ -258,6 +267,7 @@ void setupButtons()
   pinMode(BUTTON_VOLUME_DOWN, INPUT_PULLUP);
   pinMode(BUTTON_VOLUME_UP, INPUT_PULLUP);
   pinMode(BUTTON_PREVIOUS, INPUT_PULLUP);
+  pinMode(BUTTON_STOP, INPUT_PULLUP);
 
   pinMode(BUTTON_PLAYLIST_1, INPUT_PULLUP);
   pinMode(BUTTON_PLAYLIST_2, INPUT_PULLUP);
@@ -277,7 +287,7 @@ void setupDFPlayer()
   Serial.println("Done");
 
   volume = EEPROM.read(EEPROM_VOLUME);
-  if (volume > 10) volume = 3;
+  if (volume > 20) volume = 5;
   setVolume(volume);
   delay(200);
   Serial.println("Done");
