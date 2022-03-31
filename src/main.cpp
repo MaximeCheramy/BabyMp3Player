@@ -312,10 +312,15 @@ void setup()
   Serial.begin(115200);
   Serial.println("initializing...");
 
+  currentTrack = readCurrentTrackPlaylist(currentPlaylist);
+
   setupDFPlayer();
   setupButtons();
 
-  currentTrack = readCurrentTrackPlaylist(currentPlaylist);
+  // Play current playlist
+  if (currentPlaylist) {
+    dfmp3.playFolderTrack(currentPlaylist, currentTrack);
+  }
 }
 
 void waitMilliseconds(uint16_t msWait)
