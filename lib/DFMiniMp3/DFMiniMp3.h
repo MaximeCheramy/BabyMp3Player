@@ -112,12 +112,48 @@ struct DfMp3_Packet_WithoutCheckSum
     uint8_t endCode;
 };
 
+
+uint16_t calcChecksum(const DfMp3_Packet_WithCheckSum& packet)
+{
+    uint16_t sum = 0xFFFF;
+    for (const uint8_t* packetByte = &(packet.version); packetByte != &(packet.hiByteCheckSum); packetByte++) {
+        sum -= *packetByte;
+    }
+    return sum + 1;
+}
+
+void setChecksum(DfMp3_Packet_WithCheckSum* out)
+{
+    uint16_t sum = calcChecksum(*out);
+
+    out->hiByteCheckSum = (sum >> 8);
+    out->lowByteCheckSum = (sum & 0xff);
+}
+
+bool validateChecksum(DfMp3_Packet_WithCheckSum& in)
+{
+    uint16_t sum = calcChecksum(in);
+    return (sum == static_cast<uint16_t>((in.hiByteCheckSum << 8) | in.lowByteCheckSum));
+}
+
 class Mp3ChipMH2024K16SS {
 public:
     static const bool SendCheckSum = false;
 
     typedef DfMp3_Packet_WithoutCheckSum SendPacket;
     typedef DfMp3_Packet_WithCheckSum ReceptionPacket;
+
+    static const SendPacket generatePacket(uint8_t command, uint16_t arg) {
+        return {
+            0x7E,
+            0xFF,
+            6,
+            command,
+            0,
+            static_cast<uint8_t>(arg >> 8),
+            static_cast<uint8_t>(arg & 0x00ff),
+            0xEF };
+    }
 };
 
 class Mp3ChipOriginal {
@@ -126,6 +162,22 @@ public:
 
     typedef DfMp3_Packet_WithCheckSum SendPacket;
     typedef DfMp3_Packet_WithCheckSum ReceptionPacket;
+
+    static const SendPacket generatePacket(uint8_t command, uint16_t arg) {
+        SendPacket packet = {
+                0x7E,
+                0xFF,
+                6,
+                command,
+                0,
+                static_cast<uint8_t>(arg >> 8),
+                static_cast<uint8_t>(arg & 0x00ff),
+                0,
+                0,
+                0xEF };
+        setChecksum(&packet);
+        return packet;
+    }
 };
 
 template <class T_SERIAL_METHOD, class T_NOTIFICATION_METHOD, class T_CHIP_VARIANT = Mp3ChipOriginal>
@@ -139,10 +191,10 @@ public:
     {
     }
 
-    void begin(unsigned long baud = 9600, unsigned long timeout = 10000)
+    void begin(unsigned long baud = 9600)
     {
         _serial.begin(baud);
-        _serial.setTimeout(timeout);
+        _serial.setTimeout(10000);
         _lastSend = millis();
     }
 
@@ -160,7 +212,8 @@ public:
     DfMp3_PlaySources getPlaySources()
     {
         drainResponses();
-        return static_cast<DfMp3_PlaySources>(sendAndListenForReply(0x3f));
+        sendPacket(0x3f);
+        return static_cast<DfMp3_PlaySources>(listenForReply(0x3f));
     }
 
     // the track as enumerated across all folders
@@ -229,7 +282,8 @@ public:
             break;
         }
 
-        return sendAndListenForReply(command);
+        sendPacket(command);
+        return listenForReply(command);
     }
 
     // 0- 30
@@ -240,7 +294,9 @@ public:
 
     uint8_t getVolume()
     {
-        return sendAndListenForReply(0x43);
+        drainResponses();
+        sendPacket(0x43);
+        return static_cast<uint8_t>(listenForReply(0x43));
     }
 
     void increaseVolume()
@@ -278,7 +334,8 @@ public:
     DfMp3_PlaybackMode getPlaybackMode()
     {
         drainResponses();
-        return static_cast<DfMp3_PlaybackMode>(sendAndListenForReply(0x45));
+        sendPacket(0x45);
+        return static_cast<DfMp3_PlaybackMode>(listenForReply(0x45));
     }
 
     void setRepeatPlayAllInRoot(bool repeat)
@@ -299,7 +356,8 @@ public:
     DfMp3_Eq getEq()
     {
         drainResponses();
-        return static_cast<DfMp3_Eq>(sendAndListenForReply(0x44));
+        sendPacket(0x44);
+        return static_cast<DfMp3_Eq>(listenForReply(0x44));
     }
 
     void setPlaybackSource(DfMp3_PlaySource source)
@@ -336,13 +394,15 @@ public:
     uint16_t getStatus()
     {
         drainResponses();
-        return sendAndListenForReply(0x42);
+        sendPacket(0x42);
+        return listenForReply(0x42);
     }
 
     uint16_t getFolderTrackCount(uint16_t folder)
     {
         drainResponses();
-        return sendAndListenForReply(0x4e, folder);
+        sendPacket(0x4e, folder);
+        return listenForReply(0x4e);
     }
 
     uint16_t getTotalTrackCount(DfMp3_PlaySource source)
@@ -367,13 +427,15 @@ public:
             break;
         }
 
-        return sendAndListenForReply(command);
+        sendPacket(command);
+        return listenForReply(command);
     }
 
     uint16_t getTotalFolderCount()
     {
         drainResponses();
-        return sendAndListenForReply(0x4F);
+        sendPacket(0x4F);
+        return listenForReply(0x4F);
     }
 
     // sd:/advert/####track name
@@ -402,6 +464,25 @@ public:
         return _isOnline;
     }
 
+    void sendPacket(uint8_t command, uint16_t arg = 0, uint16_t sendSpaceNeeded = c_msSendSpace)
+    {
+        typename T_CHIP_VARIANT::SendPacket packet = T_CHIP_VARIANT::generatePacket(command, arg);
+
+        // wait for spacing since last send
+        while (((millis() - _lastSend) < _lastSendSpace))
+        {
+            // check for event messages from the device while
+            // we wait
+            loop();
+            delay(1);
+        }
+
+        _lastSendSpace = sendSpaceNeeded;
+        _serial.write(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+
+        _lastSend = millis();
+    }
+
 private:
     static const uint16_t c_msSendSpace = 50;
 
@@ -418,51 +499,7 @@ private:
         }
     }
 
-    void sendPacket(uint8_t command, uint16_t arg = 0, uint16_t sendSpaceNeeded = c_msSendSpace)
-    {
-        typename T_CHIP_VARIANT::SendPacket packet;
-        if (T_CHIP_VARIANT::SendCheckSum)
-        {
-            packet = {
-                0x7E,
-                0xFF,
-                6,
-                command,
-                0,
-                static_cast<uint8_t>(arg >> 8),
-                static_cast<uint8_t>(arg & 0x00ff),
-                0,
-                0,
-                0xEF };
-            setChecksum(&packet);
-        }
-        else
-        {
-            packet = {
-                0x7E,
-                0xFF,
-                6,
-                command,
-                0,
-                static_cast<uint8_t>(arg >> 8),
-                static_cast<uint8_t>(arg & 0x00ff),
-                0xEF };
-        }
 
-        // wait for spacing since last send
-        while (((millis() - _lastSend) < _lastSendSpace))
-        {
-            // check for event messages from the device while
-            // we wait
-            loop();
-            delay(1);
-        }
-
-        _lastSendSpace = sendSpaceNeeded;
-        _serial.write(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
-
-        _lastSend = millis();
-    }
 
     bool readPacket(uint8_t* command, uint16_t* argument)
     {
@@ -518,7 +555,7 @@ private:
         return true;
     }
 
-    int32_t listenForReply(uint8_t command)
+    uint16_t listenForReply(uint8_t command)
     {
         uint8_t replyCommand = 0;
         uint16_t replyArg = 0;
@@ -582,47 +619,12 @@ private:
                     T_NOTIFICATION_METHOD::OnError(*this, replyArg);
                     if (_serial.available() == 0)
                     {
-                        // -1 means an error occurred
-                        return -1;
+                        return 0;
                     }
                 }
             }
         } while (command != 0);
 
         return 0;
-    }
-
-    int32_t sendAndListenForReply(uint8_t command, uint16_t arg = 0, int retryCount = 3)
-    {
-        int32_t rep = -1;
-        for (int i = 0; i < retryCount && rep == -1; i++)
-        {
-            sendPacket(command, arg);
-            rep = listenForReply(command);
-        }
-        return rep;
-    }
-
-    uint16_t calcChecksum(const DfMp3_Packet_WithCheckSum& packet)
-    {
-        uint16_t sum = 0xFFFF;
-        for (const uint8_t* packetByte = &(packet.version); packetByte != &(packet.hiByteCheckSum); packetByte++) {
-            sum -= *packetByte;
-        }
-        return sum + 1;
-    }
-
-    void setChecksum(DfMp3_Packet_WithCheckSum* out)
-    {
-        uint16_t sum = calcChecksum(*out);
-
-        out->hiByteCheckSum = (sum >> 8);
-        out->lowByteCheckSum = (sum & 0xff);
-    }
-
-    bool validateChecksum(DfMp3_Packet_WithCheckSum& in)
-    {
-        uint16_t sum = calcChecksum(in);
-        return (sum == static_cast<uint16_t>((in.hiByteCheckSum << 8) | in.lowByteCheckSum));
     }
 };
